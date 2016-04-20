@@ -1,0 +1,144 @@
+<?php
+define('GROUP_VID', 1);
+/**
+ * Implementation of hook_menu().
+ */
+function isb_cloning_menu() {
+  $items = array();
+  $items['isb-cloning/%'] = array(
+    'title' => 'Add Group Alias',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('isb_cloning_form'),
+    'access callback' => TRUE,
+  );
+
+  return $items;
+}
+
+/**
+ * Simple form
+ */
+function isb_cloning_form() {
+  $form['nid'] = array('#type' => 'hidden', '#value' => arg(1));
+  $form['title'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name'),
+    '#default_value' => db_result(db_query("select title from {node} where nid = %d ", arg(1))) ." Clone",
+    '#size' => 60,
+    '#maxlength' => 128,
+    '#required' => TRUE,
+  );
+  
+  $form['group'] = array(
+    '#type' => 'textfield', 
+    '#title' => t('Group Name'),
+    '#default_value' => db_result(db_query("select name from {term_data} where vid = %d AND tid in (select tid from {term_node} where nid = %d ) ", array(GROUP_VID,arg(1)))) ." Clone",
+    '#size' => 60,
+    '#maxlength' => 128,
+    '#required' => TRUE,
+  );
+  
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => 'Clone',
+  );
+
+  return $form;
+}
+
+/**
+ * Submit handler for the form 'isb_cloning_simple_form'.
+ *
+ * This submit handler will be called when the user clicks 'Go' in
+ * the form.
+ */
+function isb_cloning_form_submit($form, &$form_state) {
+
+  $term = array(
+    'vid' => GROUP_VID, // Voacabulary ID
+    'name' => $form_state['values']['group'], // Term Name
+  );
+
+  taxonomy_save_term($term);
+  
+  $newtid = db_fetch_object(db_query("select * from {term_data} where vid = %d AND name like '%s' ORDER BY tid DESC", array(GROUP_VID, $form_state['values']['group'])));
+  $nid = $form_state['values']['nid'];
+  $node = node_load($nid);
+  unset($node->nid);
+  $node->title = $form_state['values']['title'];
+  foreach ($node->taxonomy as $tx){
+    if($tx->vid == GROUP_VID){
+        $gtid = $tx->tid;
+        unset($node->taxonomy[$gtid]);
+    }
+  }
+  $node->taxonomy[$newtid->tid] = $newtid;
+  node_save($node);
+  $new_nid = $node->nid;
+  
+  batch_set(isb_cloning_batch($nid, $new_nid, $gtid, $newtid));
+
+  // Redirection takes place as usual.
+  $form_state['redirect'] = 'node/'. $new_nid;
+}
+
+
+/**
+ * Batch : load all nodes 1 by 1, all nodes in current microsite (Multipart operation)
+ *
+ */
+function isb_cloning_batch($id, $new_id, $gid, $newgrop) {
+  $operations = array();
+  $result = db_query("select nid from {term_node} where tid = %d", $gid );
+  while ($row = db_fetch_object($result)) {
+    if($row->nid !== $id){
+      $operations[] = array('isb_cloning_op', array($row->nid, $id, $new_id, $gid, $newgrop));
+    }
+  }
+  $batch = array(
+    'operations' => $operations,
+    'finished' => 'isb_cloning_finished',
+    // We can define custom messages instead of the default ones.
+    'title' => t('Processing batch'),
+    'init_message' => t('Batch is starting.'),
+    'progress_message' => t('Processed @current out of @total.'),
+    'error_message' => t('Batch has encountered an error.'),
+  );
+  return $batch;
+}
+
+/**
+ * Batch : load all nodes 1 by 1, all nodes
+ */
+function isb_cloning_op($nid, $id, $new_id, $gid, $newgrop, &$context) {
+  $node = node_load($nid, NULL, TRUE);
+
+  // Store some result for post-processing in the finished callback.
+  $context['results'][] = $node->nid . ' : ' . check_plain($node->title);
+
+  // Optional message displayed under the progressbar.
+  $context['message'] = t('Loading @title', array('@title' => $node->title));
+
+}
+
+/**
+ * Batch 'finished' callback used by batch
+ */
+function isb_cloning_finished($success, $results, $operations) {
+  if ($success) {
+    // Here we could do something meaningful with the results.
+    // We just display the number of nodes we processed...
+    $message = count($results) . ' processed.';
+  }
+  else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    $message = 'An error occurred while processing ' . $error_operation[0] . ' with arguments :' . print_r($error_operation[0], TRUE);
+  }
+  drupal_set_message($message);
+}
+
+/**
+ * @} End of "defgroup isb_cloning".
+ */

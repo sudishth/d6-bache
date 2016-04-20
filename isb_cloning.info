@@ -1,0 +1,11 @@
+name = isb_cloning
+description = To perform large opration and single time.
+core = 6.x
+package = ISB
+
+; Information added by drupal.org packaging cloning on 2016-04-18
+version = "6.x-1.x-dev"
+core = "6.x"
+project = "isb_cloning"
+datestamp = "1460973499"
+
